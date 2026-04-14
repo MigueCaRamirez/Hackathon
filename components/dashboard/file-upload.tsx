@@ -5,23 +5,33 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Upload, FileSpreadsheet, Check, AlertCircle, Download, Trash2, Loader2 } from "lucide-react"
-import { MunicipioData } from "@/lib/types"
+import { TaxiTripData } from "@/lib/types"
 
 interface FileUploadProps {
-  onDataLoaded: (data: MunicipioData[]) => void
+  onDataLoaded: (data: TaxiTripData[]) => void
   hasData: boolean
   onClearData: () => void
-  currentData: MunicipioData[]
+  currentData: TaxiTripData[]
 }
 
 interface CleaningReport {
   originalRows: number
   cleanedRows: number
   removedRows: number
-  duplicatesRemoved: number
-  nullsFixed: number
+  nullsRemoved: number
+  zeroDistanceRemoved: number
+  invalidDataRemoved: number
   errors: string[]
 }
+
+// Columnas esperadas del dataset
+const EXPECTED_COLUMNS = [
+  'VendorID', 'tpep_pickup_datetime', 'tpep_dropoff_datetime', 'passenger_count',
+  'trip_distance', 'pickup_longitude', 'pickup_latitude', 'RateCodeID',
+  'store_and_fwd_flag', 'dropoff_longitude', 'dropoff_latitude', 'payment_type',
+  'fare_amount', 'extra', 'mta_tax', 'tip_amount', 'tolls_amount',
+  'improvement_surcharge', 'total_amount'
+]
 
 export function FileUpload({ onDataLoaded, hasData, onClearData, currentData }: FileUploadProps) {
   const [isDragging, setIsDragging] = useState(false)
@@ -30,164 +40,250 @@ export function FileUpload({ onDataLoaded, hasData, onClearData, currentData }: 
   const [cleaningReport, setCleaningReport] = useState<CleaningReport | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  // ── Helpers de estandarizacion ──────────────────────────────────────────────
-
-  /** Quita tildes y caracteres diacriticos */
-  const removeTildes = (str: string): string =>
-    str.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  // ── Helpers de formato ──────────────────────────────────────────────
 
   /**
-   * Estandariza nombre de municipio:
-   *   "Municipio_1"  →  "Municipio 1"
-   * Reemplaza guiones bajos por espacio.
+   * Convierte fecha de formato "yyyy-mm-dd HH:MM:SS" a "dd/mm/yyyy HH:MM:SS"
    */
-  const standardizeMunicipio = (raw: string): string =>
-    raw.trim().replace(/_/g, ' ')
-
-  /**
-   * Estandariza nombre de departamento:
-   *   1. Quita tildes
-   *   2. Elimina articulos iniciales (La, El, Los, Las, Del, De, San)
-   *   3. Convierte a MAYUSCULAS SOSTENIDAS
-   *   "La Guajira" → "GUAJIRA"
-   */
-  const ARTICLES = /^(LA|EL|LOS|LAS|DEL|DE LA|DE LOS|DE LAS|DE|SAN|SANTA)\s+/i
-  const standardizeDepartamento = (raw: string): string => {
-    const sinTildes = removeTildes(raw.trim())
-    const sinArticulo = sinTildes.replace(ARTICLES, '')
-    return sinArticulo.toUpperCase()
-  }
-
-  /**
-   * Estandariza nombre de columna para el CSV de salida:
-   *   1. Quita tildes
-   *   2. Reemplaza "_" por espacio
-   *   3. Convierte a MAYUSCULAS
-   *   "acceso_internet" → "ACCESO INTERNET"
-   */
-  const standardizeColumnName = (col: string): string =>
-    removeTildes(col.trim()).replace(/_/g, ' ').toUpperCase()
-
-  /**
-   * Mapea nombres de columna del archivo entrante al nombre interno.
-   * Normaliza quitando tildes, espacios → "_" y pasando a minusculas.
-   */
-  const mapColumnName = (col: string): string => {
-    const normalized = removeTildes(col.toLowerCase().trim()).replace(/\s+/g, '_')
-    const mappings: Record<string, string> = {
-      'municipio': 'municipio',
-      'municipality': 'municipio',
-      'nombre_municipio': 'municipio',
-      'departamento': 'departamento',
-      'department': 'departamento',
-      'dept': 'departamento',
-      'pobreza': 'pobreza',
-      'poverty': 'pobreza',
-      'indice_pobreza': 'pobreza',
-      'poverty_rate': 'pobreza',
-      'acceso_internet': 'acceso_internet',
-      'internet': 'acceso_internet',
-      'internet_access': 'acceso_internet',
-      'cobertura_internet': 'acceso_internet',
-      'empleo_tech': 'empleo_tech',
-      'empleos_tech': 'empleo_tech',
-      'tech_jobs': 'empleo_tech',
-      'tech_employment': 'empleo_tech',
-      'empleos_tecnologia': 'empleo_tech',
+  const formatDateTime = (raw: string): string | null => {
+    if (!raw || typeof raw !== 'string') return null
+    
+    const trimmed = raw.trim()
+    
+    // Si ya esta en formato dd/mm/yyyy
+    if (/^\d{2}\/\d{2}\/\d{4}/.test(trimmed)) {
+      return trimmed
     }
-    return mappings[normalized] || normalized
+    
+    // Formato yyyy-mm-dd HH:MM:SS
+    const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/)
+    if (match) {
+      const [, year, month, day, hour, minute, second] = match
+      // Validar valores
+      const y = parseInt(year, 10)
+      const m = parseInt(month, 10)
+      const d = parseInt(day, 10)
+      const h = parseInt(hour, 10)
+      const min = parseInt(minute, 10)
+      const s = parseInt(second, 10)
+      
+      if (y < 1900 || y > 2100) return null
+      if (m < 1 || m > 12) return null
+      if (d < 1 || d > 31) return null
+      if (h < 0 || h > 23) return null
+      if (min < 0 || min > 59) return null
+      if (s < 0 || s > 59) return null
+      
+      return `${day}/${month}/${year} ${hour}:${minute}:${second}`
+    }
+    
+    return null
   }
 
   /**
-   * Convierte un valor numerico a porcentaje con EXACTAMENTE 2 decimales.
-   * Regla: el primer punto separa la parte entera del decimal.
-   *   "20.360319878..."  →  20.36
-   *   "20.3"            →  20.30  (siempre 2 decimales)
-   *   "20,36"           →  20.36  (soporte coma como decimal)
-   *   "20"              →  20.00
+   * Parsea un numero, retorna null si no es valido o contiene letras
    */
-  const parsePercentage = (raw: unknown): number => {
-    const str = String(raw ?? '').trim().replace(',', '.')
-    // Buscar patron de numero con decimales
-    const match = str.match(/^(\d+)\.?(\d*)/)
-    if (!match) return 0.00
+  const parseNumber = (raw: unknown): number | null => {
+    if (raw === null || raw === undefined || raw === '') return null
     
-    const integerPart = match[1]
-    const decimalPart = (match[2] || '00').substring(0, 2).padEnd(2, '0')
+    const str = String(raw).trim()
     
-    const result = parseFloat(`${integerPart}.${decimalPart}`)
-    return isNaN(result) ? 0.00 : result
+    // Verificar que no contenga letras (excepto notacion cientifica)
+    if (/[a-df-zA-DF-Z]/.test(str)) return null
+    
+    const num = parseFloat(str)
+    if (isNaN(num)) return null
+    
+    return num
   }
 
   /**
-   * Formatea un numero para que siempre tenga 2 decimales en el CSV de salida
+   * Parsea un entero, retorna null si no es valido
    */
-  const formatPercentageForExport = (num: number): string => {
-    return num.toFixed(2)
+  const parseInteger = (raw: unknown): number | null => {
+    if (raw === null || raw === undefined || raw === '') return null
+    
+    const str = String(raw).trim()
+    
+    // Verificar que solo contenga digitos (y posible signo)
+    if (!/^-?\d+$/.test(str)) return null
+    
+    const num = parseInt(str, 10)
+    if (isNaN(num)) return null
+    
+    return num
   }
 
-  // ── Limpieza y estandarizacion principal ────────────────────────────────────
+  /**
+   * Formatea coordenadas sin notacion cientifica (6 decimales)
+   */
+  const formatCoordinate = (num: number): number => {
+    // Convertir a string sin notacion cientifica
+    const str = num.toFixed(6)
+    return parseFloat(str)
+  }
 
-  const cleanAndValidateData = (rawData: Record<string, unknown>[]): { data: MunicipioData[], report: CleaningReport } => {
+  /**
+   * Formatea numeros decimales asegurando que el 0 antes del punto este presente
+   */
+  const formatDecimal = (num: number, decimals: number = 2): number => {
+    return parseFloat(num.toFixed(decimals))
+  }
+
+  // ── Limpieza y validacion principal ────────────────────────────────────
+
+  const cleanAndValidateData = (rawData: Record<string, unknown>[]): { data: TaxiTripData[], report: CleaningReport } => {
     const report: CleaningReport = {
       originalRows: rawData.length,
       cleanedRows: 0,
       removedRows: 0,
-      duplicatesRemoved: 0,
-      nullsFixed: 0,
+      nullsRemoved: 0,
+      zeroDistanceRemoved: 0,
+      invalidDataRemoved: 0,
       errors: []
     }
 
-    // Normalizar nombres de columna
-    const normalizedData = rawData.map(row => {
-      const out: Record<string, unknown> = {}
-      for (const [key, value] of Object.entries(row)) {
-        out[mapColumnName(key)] = value
+    const cleanedData: TaxiTripData[] = []
+
+    for (const row of rawData) {
+      // 1. Verificar campos nulos - eliminar registro si hay alguno nulo
+      let hasNull = false
+      for (const col of EXPECTED_COLUMNS) {
+        const value = row[col]
+        if (value === null || value === undefined || value === '') {
+          hasNull = true
+          break
+        }
       }
-      return out
-    })
-
-    const seenMunicipios = new Set<string>()
-    const cleanedData: MunicipioData[] = []
-
-    for (const row of normalizedData) {
-      if (!row.municipio || !row.departamento) {
-        report.removedRows++
+      
+      if (hasNull) {
+        report.nullsRemoved++
         continue
       }
 
-      // 1. Municipio: reemplaza "_" por espacio
-      const municipio = standardizeMunicipio(String(row.municipio))
-
-      // 2. Departamento: sin tildes, sin articulo, MAYUSCULAS
-      const departamento = standardizeDepartamento(String(row.departamento))
-
-      // Duplicados
-      const key = `${municipio}||${departamento}`
-      if (seenMunicipios.has(key)) {
-        report.duplicatesRemoved++
+      // 2. Parsear y validar VendorID (entero)
+      const VendorID = parseInteger(row.VendorID)
+      if (VendorID === null) {
+        report.invalidDataRemoved++
         continue
       }
-      seenMunicipios.add(key)
 
-      // 3. Pobreza y Acceso_internet: primer punto = limite del porcentaje
-      let pobreza = parsePercentage(row.pobreza)
-      let acceso_internet = parsePercentage(row.acceso_internet)
+      // 3. Parsear y validar fechas
+      const tpep_pickup_datetime = formatDateTime(String(row.tpep_pickup_datetime))
+      const tpep_dropoff_datetime = formatDateTime(String(row.tpep_dropoff_datetime))
+      
+      if (!tpep_pickup_datetime || !tpep_dropoff_datetime) {
+        report.invalidDataRemoved++
+        continue
+      }
 
-      if (isNaN(pobreza) || pobreza < 0) { pobreza = 0; report.nullsFixed++ }
-      if (pobreza > 100) pobreza = 100
+      // 4. Parsear passenger_count (entero)
+      const passenger_count = parseInteger(row.passenger_count)
+      if (passenger_count === null || passenger_count < 0) {
+        report.invalidDataRemoved++
+        continue
+      }
 
-      if (isNaN(acceso_internet) || acceso_internet < 0) { acceso_internet = 0; report.nullsFixed++ }
-      if (acceso_internet > 100) acceso_internet = 100
+      // 5. Parsear trip_distance - eliminar si es 0
+      const trip_distance_raw = parseNumber(row.trip_distance)
+      if (trip_distance_raw === null) {
+        report.invalidDataRemoved++
+        continue
+      }
+      if (trip_distance_raw === 0) {
+        report.zeroDistanceRemoved++
+        continue
+      }
+      const trip_distance = formatDecimal(trip_distance_raw, 2)
 
-      let empleo_tech = parseInt(String(row.empleo_tech ?? '0'), 10)
-      if (isNaN(empleo_tech) || empleo_tech < 0) { empleo_tech = 0; report.nullsFixed++ }
+      // 6. Parsear coordenadas (sin notacion cientifica)
+      const pickup_longitude_raw = parseNumber(row.pickup_longitude)
+      const pickup_latitude_raw = parseNumber(row.pickup_latitude)
+      const dropoff_longitude_raw = parseNumber(row.dropoff_longitude)
+      const dropoff_latitude_raw = parseNumber(row.dropoff_latitude)
+      
+      if (pickup_longitude_raw === null || pickup_latitude_raw === null ||
+          dropoff_longitude_raw === null || dropoff_latitude_raw === null) {
+        report.invalidDataRemoved++
+        continue
+      }
+      
+      const pickup_longitude = formatCoordinate(pickup_longitude_raw)
+      const pickup_latitude = formatCoordinate(pickup_latitude_raw)
+      const dropoff_longitude = formatCoordinate(dropoff_longitude_raw)
+      const dropoff_latitude = formatCoordinate(dropoff_latitude_raw)
 
-      cleanedData.push({ municipio, departamento, pobreza, acceso_internet, empleo_tech })
+      // 7. Parsear RateCodeID (entero)
+      const RateCodeID = parseInteger(row.RateCodeID)
+      if (RateCodeID === null) {
+        report.invalidDataRemoved++
+        continue
+      }
+
+      // 8. Validar store_and_fwd_flag (debe ser Y o N)
+      const store_and_fwd_flag = String(row.store_and_fwd_flag).trim().toUpperCase()
+      if (store_and_fwd_flag !== 'Y' && store_and_fwd_flag !== 'N') {
+        report.invalidDataRemoved++
+        continue
+      }
+
+      // 9. Parsear payment_type (entero)
+      const payment_type = parseInteger(row.payment_type)
+      if (payment_type === null) {
+        report.invalidDataRemoved++
+        continue
+      }
+
+      // 10. Parsear campos monetarios (decimales)
+      const fare_amount_raw = parseNumber(row.fare_amount)
+      const extra_raw = parseNumber(row.extra)
+      const mta_tax_raw = parseNumber(row.mta_tax)
+      const tip_amount_raw = parseNumber(row.tip_amount)
+      const tolls_amount_raw = parseNumber(row.tolls_amount)
+      const improvement_surcharge_raw = parseNumber(row.improvement_surcharge)
+      const total_amount_raw = parseNumber(row.total_amount)
+      
+      if (fare_amount_raw === null || extra_raw === null || mta_tax_raw === null ||
+          tip_amount_raw === null || tolls_amount_raw === null || 
+          improvement_surcharge_raw === null || total_amount_raw === null) {
+        report.invalidDataRemoved++
+        continue
+      }
+      
+      const fare_amount = formatDecimal(fare_amount_raw, 2)
+      const extra = formatDecimal(extra_raw, 2)
+      const mta_tax = formatDecimal(mta_tax_raw, 2)
+      const tip_amount = formatDecimal(tip_amount_raw, 2)
+      const tolls_amount = formatDecimal(tolls_amount_raw, 2)
+      const improvement_surcharge = formatDecimal(improvement_surcharge_raw, 2)
+      const total_amount = formatDecimal(total_amount_raw, 2)
+
+      // Registro valido
+      cleanedData.push({
+        VendorID,
+        tpep_pickup_datetime,
+        tpep_dropoff_datetime,
+        passenger_count,
+        trip_distance,
+        pickup_longitude,
+        pickup_latitude,
+        RateCodeID,
+        store_and_fwd_flag,
+        dropoff_longitude,
+        dropoff_latitude,
+        payment_type,
+        fare_amount,
+        extra,
+        mta_tax,
+        tip_amount,
+        tolls_amount,
+        improvement_surcharge,
+        total_amount
+      })
     }
 
     report.cleanedRows = cleanedData.length
-    report.removedRows = Math.max(0, report.originalRows - report.cleanedRows - report.duplicatesRemoved)
+    report.removedRows = report.originalRows - report.cleanedRows
 
     return { data: cleanedData, report }
   }
@@ -196,11 +292,11 @@ export function FileUpload({ onDataLoaded, hasData, onClearData, currentData }: 
     const lines = text.split('\n').filter(line => line.trim())
     if (lines.length < 2) throw new Error('El archivo debe tener al menos una fila de encabezados y una de datos')
 
-    const headers = lines[0].split(/[,;]/).map(h => h.trim().replace(/^["']|["']$/g, ''))
+    const headers = lines[0].split(',').map(h => h.trim().replace(/^["']|["']$/g, ''))
     const data: Record<string, unknown>[] = []
 
     for (let i = 1; i < lines.length; i++) {
-      const values = lines[i].split(/[,;]/).map(v => v.trim().replace(/^["']|["']$/g, ''))
+      const values = lines[i].split(',').map(v => v.trim().replace(/^["']|["']$/g, ''))
       if (values.length !== headers.length) continue
 
       const row: Record<string, unknown> = {}
@@ -214,7 +310,6 @@ export function FileUpload({ onDataLoaded, hasData, onClearData, currentData }: 
   }
 
   const parseExcel = async (buffer: ArrayBuffer): Promise<Record<string, unknown>[]> => {
-    // Dynamic import for xlsx library
     const XLSX = await import('xlsx')
     const workbook = XLSX.read(buffer, { type: 'array' })
     const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
@@ -246,7 +341,7 @@ export function FileUpload({ onDataLoaded, hasData, onClearData, currentData }: 
       const { data, report } = cleanAndValidateData(rawData)
 
       if (data.length === 0) {
-        throw new Error('No se pudieron procesar datos validos. Verifique que las columnas sean: municipio, departamento, pobreza, acceso_internet, empleo_tech')
+        throw new Error('No se pudieron procesar datos validos. Verifique que las columnas coincidan con el formato esperado.')
       }
 
       setFileName(file.name)
@@ -275,21 +370,27 @@ export function FileUpload({ onDataLoaded, hasData, onClearData, currentData }: 
   const downloadCleanedCSV = () => {
     if (currentData.length === 0) return
 
-    // Columnas internas y sus encabezados estandarizados para Power BI
-    // 4. Nombres de columna: MAYUSCULAS, sin tildes, sin "_", palabras separadas por espacio
-    const internalKeys: (keyof MunicipioData)[] = ['municipio', 'departamento', 'pobreza', 'acceso_internet', 'empleo_tech']
-    const exportHeaders = internalKeys.map(k => standardizeColumnName(k))
-
+    const headers = EXPECTED_COLUMNS.join(',')
+    
     const csvContent = [
-      exportHeaders.join(','),
-      ...currentData.map(row =>
-        internalKeys.map(k => {
-          const value = row[k]
-          // Formatear porcentajes con exactamente 2 decimales
-          if (k === 'pobreza' || k === 'acceso_internet') {
-            return formatPercentageForExport(value as number)
+      headers,
+      ...currentData.map(row => 
+        EXPECTED_COLUMNS.map(col => {
+          const value = row[col as keyof TaxiTripData]
+          if (typeof value === 'string') {
+            return `"${value}"`
           }
-          return typeof value === 'string' ? `"${value}"` : value
+          // Asegurar que decimales menores a 1 tengan el 0 antes del punto
+          if (typeof value === 'number') {
+            if (col.includes('longitude') || col.includes('latitude')) {
+              return value.toFixed(6)
+            }
+            if (['trip_distance', 'fare_amount', 'extra', 'mta_tax', 'tip_amount', 
+                 'tolls_amount', 'improvement_surcharge', 'total_amount'].includes(col)) {
+              return value.toFixed(2)
+            }
+          }
+          return value
         }).join(',')
       )
     ].join('\n')
@@ -298,7 +399,7 @@ export function FileUpload({ onDataLoaded, hasData, onClearData, currentData }: 
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = 'datos_limpios_powerbi.csv'
+    link.download = 'taxi_trips_cleaned.csv'
     link.click()
     URL.revokeObjectURL(url)
   }
@@ -317,10 +418,10 @@ export function FileUpload({ onDataLoaded, hasData, onClearData, currentData }: 
           <div>
             <CardTitle className="text-lg flex items-center gap-2">
               <FileSpreadsheet className="h-5 w-5 text-emerald-600" />
-              Cargar Datos
+              Cargar Dataset de Viajes
             </CardTitle>
             <CardDescription>
-              Suba un archivo CSV o Excel para analizar
+              Suba un archivo CSV o Excel con datos de viajes de taxi NYC
             </CardDescription>
           </div>
           {hasData && (
@@ -332,7 +433,7 @@ export function FileUpload({ onDataLoaded, hasData, onClearData, currentData }: 
                 className="gap-2"
               >
                 <Download className="h-4 w-4" />
-                Descargar CSV para Power BI
+                Descargar CSV Limpio
               </Button>
               <Button 
                 variant="ghost" 
@@ -370,7 +471,7 @@ export function FileUpload({ onDataLoaded, hasData, onClearData, currentData }: 
           {isProcessing ? (
             <div className="flex flex-col items-center gap-2">
               <Loader2 className="h-8 w-8 text-emerald-600 animate-spin" />
-              <p className="text-sm text-muted-foreground">Procesando archivo...</p>
+              <p className="text-sm text-muted-foreground">Procesando y limpiando archivo...</p>
             </div>
           ) : (
             <>
@@ -398,7 +499,7 @@ export function FileUpload({ onDataLoaded, hasData, onClearData, currentData }: 
           <div className="p-4 rounded-lg bg-emerald-50 border border-emerald-200 space-y-3">
             <div className="flex items-center gap-2 text-emerald-700">
               <Check className="h-5 w-5" />
-              <span className="font-medium">Archivo procesado exitosamente</span>
+              <span className="font-medium">Archivo procesado y limpiado exitosamente</span>
             </div>
             
             <div className="flex flex-wrap gap-2">
@@ -409,25 +510,26 @@ export function FileUpload({ onDataLoaded, hasData, onClearData, currentData }: 
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
               <div className="p-2 rounded bg-white/80">
-                <p className="text-muted-foreground text-xs">Filas originales</p>
-                <p className="font-semibold text-emerald-700">{cleaningReport.originalRows}</p>
+                <p className="text-muted-foreground text-xs">Registros originales</p>
+                <p className="font-semibold text-emerald-700">{cleaningReport.originalRows.toLocaleString()}</p>
               </div>
               <div className="p-2 rounded bg-white/80">
-                <p className="text-muted-foreground text-xs">Filas limpias</p>
-                <p className="font-semibold text-emerald-700">{cleaningReport.cleanedRows}</p>
+                <p className="text-muted-foreground text-xs">Registros limpios</p>
+                <p className="font-semibold text-emerald-700">{cleaningReport.cleanedRows.toLocaleString()}</p>
               </div>
               <div className="p-2 rounded bg-white/80">
-                <p className="text-muted-foreground text-xs">Duplicados eliminados</p>
-                <p className="font-semibold text-amber-600">{cleaningReport.duplicatesRemoved}</p>
+                <p className="text-muted-foreground text-xs">Nulos eliminados</p>
+                <p className="font-semibold text-amber-600">{cleaningReport.nullsRemoved.toLocaleString()}</p>
               </div>
               <div className="p-2 rounded bg-white/80">
-                <p className="text-muted-foreground text-xs">Valores corregidos</p>
-                <p className="font-semibold text-amber-600">{cleaningReport.nullsFixed}</p>
+                <p className="text-muted-foreground text-xs">Distancia 0 eliminados</p>
+                <p className="font-semibold text-amber-600">{cleaningReport.zeroDistanceRemoved.toLocaleString()}</p>
               </div>
             </div>
 
             <p className="text-xs text-emerald-600">
-              Transformaciones aplicadas: municipios sin guion bajo, departamentos en MAYUSCULAS sin articulos ni tildes, pobreza e internet truncados a 2 decimales, columnas de salida estandarizadas.
+              Limpieza aplicada: fechas en formato dd/mm/yyyy HH:MM:SS, coordenadas sin notacion cientifica, 
+              eliminacion de registros con valores nulos o trip_distance=0, validacion de tipos de datos.
             </p>
           </div>
         )}
@@ -437,14 +539,18 @@ export function FileUpload({ onDataLoaded, hasData, onClearData, currentData }: 
           <div className="p-3 rounded-lg bg-secondary/50 border border-border/50 space-y-2">
             <p className="text-xs font-medium text-muted-foreground">Columnas esperadas en el archivo:</p>
             <div className="flex flex-wrap gap-1.5">
-              {['municipio', 'departamento', 'pobreza', 'acceso_internet', 'empleo_tech'].map(col => (
+              {EXPECTED_COLUMNS.slice(0, 8).map(col => (
                 <Badge key={col} variant="outline" className="text-xs font-mono">
                   {col}
                 </Badge>
               ))}
+              <Badge variant="outline" className="text-xs font-mono">
+                ... +{EXPECTED_COLUMNS.length - 8} mas
+              </Badge>
             </div>
             <p className="text-xs text-muted-foreground">
-              El CSV exportado tendra encabezados estandarizados: <span className="font-mono font-medium">MUNICIPIO, DEPARTAMENTO, POBREZA, ACCESO INTERNET, EMPLEO TECH</span>
+              El sistema limpiara automaticamente: eliminara nulos, validara formatos de fecha, 
+              eliminara viajes con distancia 0, y formateara coordenadas sin notacion cientifica.
             </p>
           </div>
         )}

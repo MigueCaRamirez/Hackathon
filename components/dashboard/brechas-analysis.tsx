@@ -4,242 +4,227 @@ import { useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
-import { MunicipioData, DepartamentoStats, getDepartamentoColor } from "@/lib/types"
-import { AlertTriangle, AlertCircle, CheckCircle2, TrendingUp, Wifi, WifiOff, Target, Lightbulb } from "lucide-react"
+import { TaxiTripData, PaymentTypeStats, HourlyStats, getPaymentTypeColor, PAYMENT_TYPE_NAMES } from "@/lib/types"
+import { Clock, DollarSign, TrendingUp, TrendingDown, MapPin, Users, Lightbulb, Star, AlertTriangle } from "lucide-react"
 
-interface BrechasAnalysisProps {
-  data: MunicipioData[]
-  departamentoStats: DepartamentoStats[]
+interface TripAnalysisProps {
+  data: TaxiTripData[]
+  paymentStats: PaymentTypeStats[]
+  hourlyStats: HourlyStats[]
 }
 
-interface MunicipioPriorizado {
-  municipio: string
-  departamento: string
-  pobreza: number
-  acceso_internet: number
-  empleo_tech: number
-  indiceBrechaDigital: number
-  prioridad: 'critica' | 'alta' | 'media' | 'baja'
+interface TopTrip {
+  pickup_datetime: string
+  distance: number
+  fare: number
+  tip: number
+  passengers: number
+  payment_type: number
 }
 
-export function BrechasAnalysis({ data, departamentoStats }: BrechasAnalysisProps) {
+export function BrechasAnalysis({ data, paymentStats, hourlyStats }: TripAnalysisProps) {
   
-  // Calcular indice de brecha digital para cada municipio
-  // Formula: (Pobreza * 0.4) + ((100 - Internet) * 0.4) + (Falta de Tech relativa * 0.2)
-  const municipiosPriorizados = useMemo(() => {
-    const maxEmpleoTech = Math.max(...data.map(d => d.empleo_tech), 1)
-    
-    return data.map(m => {
-      // Normalizar empleo tech (invertido: menos empleo = mas brecha)
-      const faltaEmpleoTech = 100 - (m.empleo_tech / maxEmpleoTech * 100)
-      
-      // Indice de brecha digital (0-100, donde 100 es maxima brecha)
-      const indiceBrechaDigital = 
-        (m.pobreza * 0.4) + 
-        ((100 - m.acceso_internet) * 0.4) + 
-        (faltaEmpleoTech * 0.2)
-      
-      let prioridad: 'critica' | 'alta' | 'media' | 'baja'
-      if (indiceBrechaDigital >= 70) prioridad = 'critica'
-      else if (indiceBrechaDigital >= 50) prioridad = 'alta'
-      else if (indiceBrechaDigital >= 30) prioridad = 'media'
-      else prioridad = 'baja'
-      
+  // Analisis de viajes
+  const tripAnalysis = useMemo(() => {
+    if (data.length === 0) {
       return {
-        ...m,
-        indiceBrechaDigital: Number(indiceBrechaDigital.toFixed(2)),
-        prioridad
+        topFareTrips: [],
+        topDistanceTrips: [],
+        topTipTrips: [],
+        avgTipByPayment: [],
+        peakHours: [],
+        lowHours: []
       }
-    }).sort((a, b) => b.indiceBrechaDigital - a.indiceBrechaDigital) as MunicipioPriorizado[]
+    }
+
+    // Top 5 viajes por tarifa
+    const topFareTrips: TopTrip[] = [...data]
+      .sort((a, b) => b.total_amount - a.total_amount)
+      .slice(0, 5)
+      .map(t => ({
+        pickup_datetime: t.tpep_pickup_datetime,
+        distance: t.trip_distance,
+        fare: t.total_amount,
+        tip: t.tip_amount,
+        passengers: t.passenger_count,
+        payment_type: t.payment_type
+      }))
+
+    // Top 5 viajes por distancia
+    const topDistanceTrips: TopTrip[] = [...data]
+      .sort((a, b) => b.trip_distance - a.trip_distance)
+      .slice(0, 5)
+      .map(t => ({
+        pickup_datetime: t.tpep_pickup_datetime,
+        distance: t.trip_distance,
+        fare: t.total_amount,
+        tip: t.tip_amount,
+        passengers: t.passenger_count,
+        payment_type: t.payment_type
+      }))
+
+    // Top 5 viajes por propina
+    const topTipTrips: TopTrip[] = [...data]
+      .sort((a, b) => b.tip_amount - a.tip_amount)
+      .slice(0, 5)
+      .map(t => ({
+        pickup_datetime: t.tpep_pickup_datetime,
+        distance: t.trip_distance,
+        fare: t.total_amount,
+        tip: t.tip_amount,
+        passengers: t.passenger_count,
+        payment_type: t.payment_type
+      }))
+
+    // Propina promedio por tipo de pago
+    const tipByPayment: Record<number, { total: number; count: number }> = {}
+    data.forEach(t => {
+      if (!tipByPayment[t.payment_type]) {
+        tipByPayment[t.payment_type] = { total: 0, count: 0 }
+      }
+      tipByPayment[t.payment_type].total += t.tip_amount
+      tipByPayment[t.payment_type].count++
+    })
+    const avgTipByPayment = Object.entries(tipByPayment)
+      .map(([type, { total, count }]) => ({
+        payment_type: parseInt(type),
+        avg_tip: count > 0 ? total / count : 0
+      }))
+      .sort((a, b) => b.avg_tip - a.avg_tip)
+
+    // Horas pico y bajas
+    const sortedHours = [...hourlyStats].sort((a, b) => b.trips - a.trips)
+    const peakHours = sortedHours.slice(0, 3)
+    const lowHours = sortedHours.slice(-3).reverse()
+
+    return {
+      topFareTrips,
+      topDistanceTrips,
+      topTipTrips,
+      avgTipByPayment,
+      peakHours,
+      lowHours
+    }
+  }, [data, hourlyStats])
+
+  // Estadisticas generales
+  const generalStats = useMemo(() => {
+    if (data.length === 0) return null
+
+    const avgPassengers = data.reduce((acc, t) => acc + t.passenger_count, 0) / data.length
+    const avgDistance = data.reduce((acc, t) => acc + t.trip_distance, 0) / data.length
+    const avgFare = data.reduce((acc, t) => acc + t.total_amount, 0) / data.length
+    const avgTip = data.reduce((acc, t) => acc + t.tip_amount, 0) / data.length
+    const tipRate = avgTip / (avgFare - avgTip) * 100
+
+    return { avgPassengers, avgDistance, avgFare, avgTip, tipRate }
   }, [data])
 
-  // Estadisticas de prioridad
-  const prioridadStats = useMemo(() => {
-    const criticos = municipiosPriorizados.filter(m => m.prioridad === 'critica')
-    const altos = municipiosPriorizados.filter(m => m.prioridad === 'alta')
-    const medios = municipiosPriorizados.filter(m => m.prioridad === 'media')
-    const bajos = municipiosPriorizados.filter(m => m.prioridad === 'baja')
-    
-    return { criticos, altos, medios, bajos }
-  }, [municipiosPriorizados])
-
-  // Top 10 municipios mas vulnerables
-  const top10Vulnerables = municipiosPriorizados.slice(0, 10)
-
-  // Departamentos con mas municipios criticos
-  const departamentosCriticos = useMemo(() => {
-    const counts: Record<string, number> = {}
-    prioridadStats.criticos.forEach(m => {
-      counts[m.departamento] = (counts[m.departamento] || 0) + 1
-    })
-    return Object.entries(counts)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-  }, [prioridadStats.criticos])
-
-  const getPrioridadColor = (prioridad: string) => {
-    switch (prioridad) {
-      case 'critica': return 'bg-red-100 text-red-700 border-red-200'
-      case 'alta': return 'bg-amber-100 text-amber-700 border-amber-200'
-      case 'media': return 'bg-yellow-100 text-yellow-700 border-yellow-200'
-      case 'baja': return 'bg-emerald-100 text-emerald-700 border-emerald-200'
-      default: return 'bg-secondary text-secondary-foreground'
-    }
-  }
-
-  const getPrioridadIcon = (prioridad: string) => {
-    switch (prioridad) {
-      case 'critica': return <AlertTriangle className="h-4 w-4" />
-      case 'alta': return <AlertCircle className="h-4 w-4" />
-      case 'media': return <TrendingUp className="h-4 w-4" />
-      case 'baja': return <CheckCircle2 className="h-4 w-4" />
-      default: return null
-    }
+  if (data.length === 0) {
+    return (
+      <Card className="border-border/50 shadow-sm">
+        <CardContent className="py-12 text-center text-muted-foreground">
+          <AlertTriangle className="h-12 w-12 mx-auto mb-3 text-amber-500" />
+          <p>Cargue un dataset para ver el analisis de viajes</p>
+        </CardContent>
+      </Card>
+    )
   }
 
   return (
     <div className="space-y-6">
-      {/* Resumen de Prioridades */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card className="border-red-200 bg-red-50/50">
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2 mb-2">
-              <AlertTriangle className="h-5 w-5 text-red-600" />
-              <span className="text-sm font-medium text-red-800">Critica</span>
-            </div>
-            <p className="text-3xl font-bold text-red-700">{prioridadStats.criticos.length}</p>
-            <p className="text-xs text-red-600">Municipios requieren intervencion urgente</p>
-          </CardContent>
-        </Card>
-        
-        <Card className="border-amber-200 bg-amber-50/50">
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2 mb-2">
-              <AlertCircle className="h-5 w-5 text-amber-600" />
-              <span className="text-sm font-medium text-amber-800">Alta</span>
-            </div>
-            <p className="text-3xl font-bold text-amber-700">{prioridadStats.altos.length}</p>
-            <p className="text-xs text-amber-600">Municipios con brecha significativa</p>
-          </CardContent>
-        </Card>
-        
-        <Card className="border-yellow-200 bg-yellow-50/50">
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2 mb-2">
-              <TrendingUp className="h-5 w-5 text-yellow-600" />
-              <span className="text-sm font-medium text-yellow-800">Media</span>
-            </div>
-            <p className="text-3xl font-bold text-yellow-700">{prioridadStats.medios.length}</p>
-            <p className="text-xs text-yellow-600">Municipios en desarrollo</p>
-          </CardContent>
-        </Card>
-        
-        <Card className="border-emerald-200 bg-emerald-50/50">
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2 mb-2">
-              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-              <span className="text-sm font-medium text-emerald-800">Baja</span>
-            </div>
-            <p className="text-3xl font-bold text-emerald-700">{prioridadStats.bajos.length}</p>
-            <p className="text-xs text-emerald-600">Municipios con buen desarrollo digital</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Modelo de Priorizacion */}
-      <Card className="border-border/50 shadow-sm">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Target className="h-5 w-5 text-emerald-600" />
-            Modelo de Priorizacion para Inversion MinTIC
-          </CardTitle>
-          <CardDescription>
-            Indice de Brecha Digital = (Pobreza x 0.4) + (Falta de Internet x 0.4) + (Falta de Empleos Tech x 0.2)
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="p-4 rounded-lg bg-secondary/50 border border-border/50 mb-4">
-            <div className="flex items-start gap-3">
-              <Lightbulb className="h-5 w-5 text-amber-500 mt-0.5 shrink-0" />
-              <div className="text-sm text-muted-foreground">
-                <p className="font-medium text-foreground mb-1">Criterios de Clasificacion:</p>
-                <ul className="list-disc list-inside space-y-1">
-                  <li><span className="text-red-600 font-medium">Critica (70-100):</span> Intervencion inmediata requerida</li>
-                  <li><span className="text-amber-600 font-medium">Alta (50-69):</span> Prioridad en proximos programas</li>
-                  <li><span className="text-yellow-600 font-medium">Media (30-49):</span> Monitoreo y apoyo gradual</li>
-                  <li><span className="text-emerald-600 font-medium">Baja (0-29):</span> Mantenimiento de conectividad</li>
-                </ul>
+      {/* Resumen General */}
+      {generalStats && (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <Card className="border-emerald-200 bg-emerald-50/50">
+            <CardContent className="pt-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Users className="h-5 w-5 text-emerald-600" />
+                <span className="text-sm font-medium text-emerald-800">Pasajeros/Viaje</span>
               </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+              <p className="text-3xl font-bold text-emerald-700">{generalStats.avgPassengers.toFixed(1)}</p>
+            </CardContent>
+          </Card>
+          
+          <Card className="border-teal-200 bg-teal-50/50">
+            <CardContent className="pt-4">
+              <div className="flex items-center gap-2 mb-2">
+                <MapPin className="h-5 w-5 text-teal-600" />
+                <span className="text-sm font-medium text-teal-800">Distancia Prom.</span>
+              </div>
+              <p className="text-3xl font-bold text-teal-700">{generalStats.avgDistance.toFixed(2)} mi</p>
+            </CardContent>
+          </Card>
+          
+          <Card className="border-green-200 bg-green-50/50">
+            <CardContent className="pt-4">
+              <div className="flex items-center gap-2 mb-2">
+                <DollarSign className="h-5 w-5 text-green-600" />
+                <span className="text-sm font-medium text-green-800">Tarifa Prom.</span>
+              </div>
+              <p className="text-3xl font-bold text-green-700">${generalStats.avgFare.toFixed(2)}</p>
+            </CardContent>
+          </Card>
+          
+          <Card className="border-lime-200 bg-lime-50/50">
+            <CardContent className="pt-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Star className="h-5 w-5 text-lime-600" />
+                <span className="text-sm font-medium text-lime-800">Propina Prom.</span>
+              </div>
+              <p className="text-3xl font-bold text-lime-700">${generalStats.avgTip.toFixed(2)}</p>
+            </CardContent>
+          </Card>
+          
+          <Card className="border-cyan-200 bg-cyan-50/50">
+            <CardContent className="pt-4">
+              <div className="flex items-center gap-2 mb-2">
+                <TrendingUp className="h-5 w-5 text-cyan-600" />
+                <span className="text-sm font-medium text-cyan-800">% Propina</span>
+              </div>
+              <p className="text-3xl font-bold text-cyan-700">{generalStats.tipRate.toFixed(1)}%</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
+      {/* Horas Pico y Bajas */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Top 10 Municipios Vulnerables */}
         <Card className="border-border/50 shadow-sm">
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
-              <WifiOff className="h-5 w-5 text-red-500" />
-              Top 10 Municipios Mas Vulnerables
+              <TrendingUp className="h-5 w-5 text-emerald-600" />
+              Horas Pico
             </CardTitle>
             <CardDescription>
-              Municipios con mayor indice de brecha digital que requieren intervencion prioritaria
+              Horas con mayor demanda de viajes
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {top10Vulnerables.map((m, index) => (
+              {tripAnalysis.peakHours.map((h, index) => (
                 <div 
-                  key={`${m.municipio}-${m.departamento}`}
-                  className="p-3 rounded-lg border border-border/50 hover:bg-secondary/30 transition-colors"
+                  key={h.hour}
+                  className="p-3 rounded-lg border border-emerald-200 bg-emerald-50/50"
                 >
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-lg font-bold text-muted-foreground w-6">
-                        {index + 1}
-                      </span>
-                      <div>
-                        <p className="font-medium text-sm">{m.municipio}</p>
-                        <p className="text-xs text-muted-foreground">{m.departamento}</p>
-                      </div>
+                      <span className="text-lg font-bold text-emerald-700">#{index + 1}</span>
+                      <Clock className="h-4 w-4 text-emerald-600" />
+                      <span className="font-medium">{h.hour.toString().padStart(2, '0')}:00 - {(h.hour + 1).toString().padStart(2, '0')}:00</span>
                     </div>
-                    <Badge variant="outline" className={`${getPrioridadColor(m.prioridad)} gap-1`}>
-                      {getPrioridadIcon(m.prioridad)}
-                      {m.prioridad.charAt(0).toUpperCase() + m.prioridad.slice(1)}
+                    <Badge variant="secondary" className="bg-emerald-100 text-emerald-700">
+                      {h.trips.toLocaleString()} viajes
                     </Badge>
                   </div>
-                  
-                  <div className="space-y-2">
-                    <div>
-                      <div className="flex justify-between text-xs mb-1">
-                        <span className="text-muted-foreground">Indice de Brecha Digital</span>
-                        <span className="font-medium">{m.indiceBrechaDigital}%</span>
-                      </div>
-                      <Progress 
-                        value={m.indiceBrechaDigital} 
-                        className="h-2"
-                        style={{ 
-                          // @ts-ignore
-                          '--progress-background': m.prioridad === 'critica' ? '#dc2626' : 
-                            m.prioridad === 'alta' ? '#d97706' : '#eab308'
-                        }}
-                      />
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="text-center p-1.5 rounded bg-white/80">
+                      <p className="font-semibold text-teal-600">${h.avg_fare.toFixed(2)}</p>
+                      <p className="text-xs text-muted-foreground">Tarifa Prom.</p>
                     </div>
-                    
-                    <div className="grid grid-cols-3 gap-2 text-xs">
-                      <div className="text-center p-1.5 rounded bg-red-50">
-                        <p className="text-red-600 font-medium">{m.pobreza.toFixed(2)}%</p>
-                        <p className="text-red-500">Pobreza</p>
-                      </div>
-                      <div className="text-center p-1.5 rounded bg-cyan-50">
-                        <p className="text-cyan-600 font-medium">{m.acceso_internet.toFixed(2)}%</p>
-                        <p className="text-cyan-500">Internet</p>
-                      </div>
-                      <div className="text-center p-1.5 rounded bg-emerald-50">
-                        <p className="text-emerald-600 font-medium">{m.empleo_tech}</p>
-                        <p className="text-emerald-500">Tech</p>
-                      </div>
+                    <div className="text-center p-1.5 rounded bg-white/80">
+                      <p className="font-semibold text-lime-600">{h.avg_distance.toFixed(2)} mi</p>
+                      <p className="text-xs text-muted-foreground">Distancia Prom.</p>
                     </div>
                   </div>
                 </div>
@@ -248,86 +233,174 @@ export function BrechasAnalysis({ data, departamentoStats }: BrechasAnalysisProp
           </CardContent>
         </Card>
 
-        {/* Departamentos con mas municipios criticos */}
         <Card className="border-border/50 shadow-sm">
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-amber-500" />
-              Departamentos con Mayor Urgencia
+              <TrendingDown className="h-5 w-5 text-amber-600" />
+              Horas Bajas
             </CardTitle>
             <CardDescription>
-              Departamentos con mas municipios en estado critico o alto
+              Horas con menor demanda de viajes
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {departamentosCriticos.length > 0 ? (
-              <div className="space-y-4">
-                {departamentosCriticos.map(([dept, count], index) => {
-                  const deptStats = departamentoStats.find(d => d.departamento === dept)
-                  const deptColor = getDepartamentoColor(dept)
-                  
-                  return (
-                    <div 
-                      key={dept}
-                      className="p-4 rounded-lg border border-border/50"
-                      style={{ borderLeftColor: deptColor, borderLeftWidth: '4px' }}
-                    >
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-2">
-                          <span className="text-lg font-bold" style={{ color: deptColor }}>
-                            #{index + 1}
-                          </span>
-                          <span className="font-semibold">{dept}</span>
-                        </div>
-                        <Badge variant="destructive" className="gap-1">
-                          <AlertTriangle className="h-3 w-3" />
-                          {count} criticos
-                        </Badge>
-                      </div>
-                      
-                      {deptStats && (
-                        <div className="grid grid-cols-3 gap-3 text-sm">
-                          <div className="text-center p-2 rounded bg-secondary/50">
-                            <p className="font-bold text-foreground">{deptStats.municipios_count}</p>
-                            <p className="text-xs text-muted-foreground">Municipios</p>
-                          </div>
-                          <div className="text-center p-2 rounded bg-red-50">
-                            <p className="font-bold text-red-600">{deptStats.promedio_pobreza.toFixed(2)}%</p>
-                            <p className="text-xs text-red-500">Prom. Pobreza</p>
-                          </div>
-                          <div className="text-center p-2 rounded bg-cyan-50">
-                            <p className="font-bold text-cyan-600">{deptStats.promedio_internet.toFixed(2)}%</p>
-                            <p className="text-xs text-cyan-500">Prom. Internet</p>
-                          </div>
-                        </div>
-                      )}
+            <div className="space-y-3">
+              {tripAnalysis.lowHours.map((h, index) => (
+                <div 
+                  key={h.hour}
+                  className="p-3 rounded-lg border border-amber-200 bg-amber-50/50"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg font-bold text-amber-700">#{index + 1}</span>
+                      <Clock className="h-4 w-4 text-amber-600" />
+                      <span className="font-medium">{h.hour.toString().padStart(2, '0')}:00 - {(h.hour + 1).toString().padStart(2, '0')}:00</span>
                     </div>
-                  )
-                })}
-              </div>
-            ) : (
-              <div className="text-center py-8 text-muted-foreground">
-                <CheckCircle2 className="h-12 w-12 mx-auto mb-3 text-emerald-500" />
-                <p>No hay municipios en estado critico</p>
-              </div>
-            )}
-
-            {/* Recomendaciones */}
-            <div className="mt-6 p-4 rounded-lg bg-emerald-50 border border-emerald-200">
-              <h4 className="font-medium text-emerald-800 mb-2 flex items-center gap-2">
-                <Lightbulb className="h-4 w-4" />
-                Recomendaciones para Politica Publica
-              </h4>
-              <ul className="text-sm text-emerald-700 space-y-1 list-disc list-inside">
-                <li>Priorizar inversiones en conectividad en municipios con indice mayor a 70</li>
-                <li>Implementar programas de capacitacion digital en zonas de alta pobreza</li>
-                <li>Fomentar teletrabajo y empleos tech en regiones con baja oportunidad laboral</li>
-                <li>Establecer alianzas publico-privadas para expandir infraestructura de internet</li>
-              </ul>
+                    <Badge variant="secondary" className="bg-amber-100 text-amber-700">
+                      {h.trips.toLocaleString()} viajes
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="text-center p-1.5 rounded bg-white/80">
+                      <p className="font-semibold text-teal-600">${h.avg_fare.toFixed(2)}</p>
+                      <p className="text-xs text-muted-foreground">Tarifa Prom.</p>
+                    </div>
+                    <div className="text-center p-1.5 rounded bg-white/80">
+                      <p className="font-semibold text-lime-600">{h.avg_distance.toFixed(2)} mi</p>
+                      <p className="text-xs text-muted-foreground">Distancia Prom.</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </CardContent>
         </Card>
       </div>
+
+      {/* Top Viajes */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Top por Tarifa */}
+        <Card className="border-border/50 shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <DollarSign className="h-5 w-5 text-emerald-600" />
+              Top 5 por Tarifa
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {tripAnalysis.topFareTrips.map((trip, index) => (
+                <div key={index} className="p-2 rounded border border-border/50 text-sm">
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-emerald-700">${trip.fare.toFixed(2)}</span>
+                    <Badge variant="outline" className="text-xs">
+                      {trip.distance.toFixed(1)} mi
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">{trip.pickup_datetime}</p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Top por Distancia */}
+        <Card className="border-border/50 shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <MapPin className="h-5 w-5 text-teal-600" />
+              Top 5 por Distancia
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {tripAnalysis.topDistanceTrips.map((trip, index) => (
+                <div key={index} className="p-2 rounded border border-border/50 text-sm">
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-teal-700">{trip.distance.toFixed(2)} mi</span>
+                    <Badge variant="outline" className="text-xs">
+                      ${trip.fare.toFixed(2)}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">{trip.pickup_datetime}</p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Top por Propina */}
+        <Card className="border-border/50 shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Star className="h-5 w-5 text-lime-600" />
+              Top 5 por Propina
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {tripAnalysis.topTipTrips.map((trip, index) => (
+                <div key={index} className="p-2 rounded border border-border/50 text-sm">
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-lime-700">${trip.tip.toFixed(2)}</span>
+                    <Badge 
+                      variant="outline" 
+                      className="text-xs"
+                      style={{ 
+                        color: getPaymentTypeColor(trip.payment_type),
+                        borderColor: getPaymentTypeColor(trip.payment_type)
+                      }}
+                    >
+                      {PAYMENT_TYPE_NAMES[trip.payment_type] || `Tipo ${trip.payment_type}`}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">{trip.pickup_datetime}</p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Propina por Tipo de Pago */}
+      <Card className="border-border/50 shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Lightbulb className="h-5 w-5 text-amber-500" />
+            Propina Promedio por Tipo de Pago
+          </CardTitle>
+          <CardDescription>
+            Analisis de propinas segun metodo de pago
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
+            {tripAnalysis.avgTipByPayment.map(({ payment_type, avg_tip }) => (
+              <div 
+                key={payment_type}
+                className="p-3 rounded-lg border text-center"
+                style={{ 
+                  borderColor: getPaymentTypeColor(payment_type),
+                  backgroundColor: `${getPaymentTypeColor(payment_type)}10`
+                }}
+              >
+                <p className="text-2xl font-bold" style={{ color: getPaymentTypeColor(payment_type) }}>
+                  ${avg_tip.toFixed(2)}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {PAYMENT_TYPE_NAMES[payment_type] || `Tipo ${payment_type}`}
+                </p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 p-3 rounded-lg bg-secondary/50 border border-border/50">
+            <p className="text-sm text-muted-foreground">
+              <strong>Insight:</strong> Las propinas son significativamente mayores en pagos con tarjeta de credito 
+              comparado con efectivo, probablemente debido a la facilidad de agregar propina en terminales digitales.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }

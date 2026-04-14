@@ -2,66 +2,75 @@
 
 import { useEffect, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
-import { Users, Wifi, Briefcase, TrendingDown } from "lucide-react"
+import { Car, Users, DollarSign, MapPin } from "lucide-react"
 
 interface KPICardsProps {
-  totalMunicipios: number
-  totalDepartamentos: number
-  promedioPobreza: number
-  promedioInternet: number
-  totalEmpleoTech: number
+  totalTrips: number
+  totalPassengers: number
+  totalRevenue: number
+  avgFare: number
+  avgDistance: number
+  totalDistance: number
 }
 
-// Formatted on the client only to avoid SSR/client locale mismatch
-function useFormattedNumber(num: number): string {
-  const [formatted, setFormatted] = useState(String(Math.round(num)))
+function useFormattedNumber(num: number, decimals: number = 0): string {
+  const [formatted, setFormatted] = useState(num.toFixed(decimals))
   useEffect(() => {
-    setFormatted(Math.round(num).toLocaleString("es-CO"))
-  }, [num])
+    if (decimals > 0) {
+      setFormatted(num.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }))
+    } else {
+      setFormatted(Math.round(num).toLocaleString("en-US"))
+    }
+  }, [num, decimals])
   return formatted
 }
 
 export function KPICards({
-  totalMunicipios,
-  totalDepartamentos,
-  promedioPobreza,
-  promedioInternet,
-  totalEmpleoTech
+  totalTrips,
+  totalPassengers,
+  totalRevenue,
+  avgFare,
+  avgDistance,
+  totalDistance
 }: KPICardsProps) {
-  const formattedEmpleoTech = useFormattedNumber(totalEmpleoTech)
+  const formattedTrips = useFormattedNumber(totalTrips)
+  const formattedPassengers = useFormattedNumber(totalPassengers)
+  const formattedRevenue = useFormattedNumber(totalRevenue, 2)
+  const formattedDistance = useFormattedNumber(totalDistance, 2)
+
   const kpis = [
     {
-      title: "Municipios Analizados",
-      value: totalMunicipios,
-      subtitle: `${totalDepartamentos} departamentos`,
-      icon: Users,
+      title: "Total Viajes",
+      value: formattedTrips,
+      subtitle: `${useFormattedNumber(avgDistance, 2)} mi promedio`,
+      icon: Car,
       iconBg: "bg-emerald-100",
       iconColor: "text-emerald-700",
       valueColor: "text-emerald-700"
     },
     {
-      title: "Promedio Pobreza",
-      value: `${promedioPobreza}%`,
-      subtitle: "Indice de pobreza regional",
-      icon: TrendingDown,
+      title: "Total Pasajeros",
+      value: formattedPassengers,
+      subtitle: `${(totalPassengers / (totalTrips || 1)).toFixed(1)} por viaje`,
+      icon: Users,
       iconBg: "bg-green-100",
       iconColor: "text-green-700",
       valueColor: "text-green-700"
     },
     {
-      title: "Acceso a Internet",
-      value: `${promedioInternet}%`,
-      subtitle: "Cobertura promedio",
-      icon: Wifi,
+      title: "Ingresos Totales",
+      value: `$${formattedRevenue}`,
+      subtitle: `$${avgFare.toFixed(2)} tarifa promedio`,
+      icon: DollarSign,
       iconBg: "bg-teal-100",
       iconColor: "text-teal-700",
       valueColor: "text-teal-700"
     },
     {
-      title: "Empleos Tech",
-      value: formattedEmpleoTech,
-      subtitle: "Total en la region",
-      icon: Briefcase,
+      title: "Distancia Total",
+      value: `${formattedDistance} mi`,
+      subtitle: "Millas recorridas",
+      icon: MapPin,
       iconBg: "bg-lime-100",
       iconColor: "text-lime-700",
       valueColor: "text-lime-700"

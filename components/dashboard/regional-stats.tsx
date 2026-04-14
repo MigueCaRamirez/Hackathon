@@ -1,63 +1,43 @@
 "use client"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { DepartamentoStats, getDepartamentoColor } from "@/lib/types"
-import { MapPin, TrendingUp, TrendingDown, Wifi, Briefcase, Building2, AlertTriangle } from "lucide-react"
+import { VendorStats, getVendorColor, VENDOR_NAMES } from "@/lib/types"
+import { Car, DollarSign, Users, MapPin, TrendingUp } from "lucide-react"
 
-// Colores fijos para metricas - consistentes con las graficas
-const METRIC_COLORS = {
-  pobreza: '#dc2626',     // Rojo - indicador negativo
-  internet: '#0891b2',    // Cyan/Teal - indicador positivo
-  tech: '#059669'         // Verde esmeralda - empleos tech
-}
-
-interface RegionalStatsProps {
-  departamentoStats: DepartamentoStats[]
-  selectedDepartamento: string | null
-  onSelectDepartamento: (dept: string | null) => void
+interface VendorStatsProps {
+  vendorStats: VendorStats[]
+  selectedVendor: number | null
+  onSelectVendor: (vendor: number | null) => void
 }
 
 export function RegionalStats({
-  departamentoStats,
-  selectedDepartamento,
-  onSelectDepartamento,
-}: RegionalStatsProps) {
-  const totalMunicipios = departamentoStats.reduce((acc, d) => acc + d.municipios_count, 0)
-  const totalEmpleoTech = departamentoStats.reduce((acc, d) => acc + d.total_empleo_tech, 0)
-
-  const getStatComparison = (value: number, type: 'pobreza' | 'internet') => {
-    const avg = departamentoStats.reduce((acc, d) => 
-      acc + (type === 'pobreza' ? d.promedio_pobreza : d.promedio_internet), 0
-    ) / departamentoStats.length
-
-    if (type === 'pobreza') {
-      return value < avg ? 'better' : value > avg ? 'worse' : 'equal'
-    }
-    return value > avg ? 'better' : value < avg ? 'worse' : 'equal'
-  }
+  vendorStats,
+  selectedVendor,
+  onSelectVendor,
+}: VendorStatsProps) {
+  const totalTrips = vendorStats.reduce((acc, v) => acc + v.total_trips, 0)
+  const totalRevenue = vendorStats.reduce((acc, v) => acc + v.total_revenue, 0)
 
   return (
     <Card className="border-border/50 shadow-sm">
       <CardHeader className="pb-2">
         <CardTitle className="text-lg flex items-center gap-2">
-          <Building2 className="h-5 w-5 text-emerald-600" />
-          Estadisticas por Departamento
+          <Car className="h-5 w-5 text-emerald-600" />
+          Estadisticas por Proveedor
         </CardTitle>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {departamentoStats.map((dept) => {
-            const isSelected = selectedDepartamento === dept.departamento
-            const pobrezaStatus = getStatComparison(dept.promedio_pobreza, 'pobreza')
-            const internetStatus = getStatComparison(dept.promedio_internet, 'internet')
-            const deptColor = getDepartamentoColor(dept.departamento)
-            const percentage = ((dept.municipios_count / totalMunicipios) * 100).toFixed(0)
-            const techPercentage = ((dept.total_empleo_tech / totalEmpleoTech) * 100).toFixed(0)
+          {vendorStats.map((vendor) => {
+            const isSelected = selectedVendor === vendor.vendorID
+            const vendorColor = getVendorColor(vendor.vendorID)
+            const tripPercentage = ((vendor.total_trips / totalTrips) * 100).toFixed(1)
+            const revenuePercentage = ((vendor.total_revenue / totalRevenue) * 100).toFixed(1)
 
             return (
               <button
-                key={dept.departamento}
-                onClick={() => onSelectDepartamento(isSelected ? null : dept.departamento)}
+                key={vendor.vendorID}
+                onClick={() => onSelectVendor(isSelected ? null : vendor.vendorID)}
                 className={`
                   p-4 rounded-xl text-left transition-all
                   ${isSelected 
@@ -66,9 +46,9 @@ export function RegionalStats({
                   }
                 `}
                 style={{
-                  backgroundColor: isSelected ? `${deptColor}15` : undefined,
-                  borderColor: isSelected ? deptColor : undefined,
-                  ringColor: deptColor
+                  backgroundColor: isSelected ? `${vendorColor}15` : undefined,
+                  borderColor: isSelected ? vendorColor : undefined,
+                  ringColor: vendorColor
                 }}
               >
                 {/* Header */}
@@ -76,53 +56,59 @@ export function RegionalStats({
                   <div className="flex items-center gap-2">
                     <div 
                       className="w-3 h-3 rounded-full"
-                      style={{ backgroundColor: deptColor }}
+                      style={{ backgroundColor: vendorColor }}
                     />
-                    <span className="font-semibold" style={{ color: isSelected ? deptColor : undefined }}>
-                      {dept.departamento}
+                    <span className="font-semibold text-sm" style={{ color: isSelected ? vendorColor : undefined }}>
+                      {vendor.vendorName}
                     </span>
                   </div>
                   <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <MapPin className="h-3 w-3" />
-                    <span>{dept.municipios_count} municipios ({percentage}%)</span>
+                    <Car className="h-3 w-3" />
+                    <span>{vendor.total_trips.toLocaleString()} viajes ({tripPercentage}%)</span>
                   </div>
                 </div>
 
                 {/* Stats Grid */}
                 <div className="grid grid-cols-3 gap-3">
-                  {/* Pobreza */}
+                  {/* Ingresos */}
                   <div className="space-y-1">
                     <div className="flex items-center gap-1">
-                      <AlertTriangle className="h-3 w-3" style={{ color: METRIC_COLORS.pobreza }} />
-                      <span className="text-xs text-muted-foreground">Pobreza</span>
+                      <DollarSign className="h-3 w-3 text-emerald-600" />
+                      <span className="text-xs text-muted-foreground">Ingresos</span>
                     </div>
-                    <p className="text-lg font-bold" style={{ color: METRIC_COLORS.pobreza }}>
-                      {dept.promedio_pobreza.toFixed(2)}%
-                    </p>
-                  </div>
-
-                  {/* Internet */}
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-1">
-                      <Wifi className="h-3 w-3" style={{ color: METRIC_COLORS.internet }} />
-                      <span className="text-xs text-muted-foreground">Internet</span>
-                    </div>
-                    <p className="text-lg font-bold" style={{ color: METRIC_COLORS.internet }}>
-                      {dept.promedio_internet.toFixed(2)}%
-                    </p>
-                  </div>
-
-                  {/* Tech Jobs */}
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-1">
-                      <Briefcase className="h-3 w-3 text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground">Tech</span>
-                    </div>
-                    <p className="text-lg font-bold text-teal-600">
-                      {dept.total_empleo_tech.toLocaleString('es-CO')}
+                    <p className="text-lg font-bold text-emerald-700">
+                      ${(vendor.total_revenue / 1000).toFixed(1)}k
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {techPercentage}% del total
+                      {revenuePercentage}% del total
+                    </p>
+                  </div>
+
+                  {/* Tarifa Promedio */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1">
+                      <TrendingUp className="h-3 w-3 text-teal-600" />
+                      <span className="text-xs text-muted-foreground">Tarifa Prom.</span>
+                    </div>
+                    <p className="text-lg font-bold text-teal-700">
+                      ${vendor.avg_fare.toFixed(2)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      +${vendor.avg_tip.toFixed(2)} propina
+                    </p>
+                  </div>
+
+                  {/* Distancia */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1">
+                      <MapPin className="h-3 w-3 text-lime-600" />
+                      <span className="text-xs text-muted-foreground">Dist. Prom.</span>
+                    </div>
+                    <p className="text-lg font-bold text-lime-700">
+                      {vendor.avg_distance.toFixed(2)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      millas
                     </p>
                   </div>
                 </div>
@@ -132,8 +118,8 @@ export function RegionalStats({
                   <div 
                     className="h-full rounded-full transition-all"
                     style={{ 
-                      width: `${percentage}%`,
-                      backgroundColor: deptColor
+                      width: `${tripPercentage}%`,
+                      backgroundColor: vendorColor
                     }}
                   />
                 </div>
@@ -142,19 +128,33 @@ export function RegionalStats({
           })}
         </div>
 
-        {/* Legend */}
-        <div className="mt-4 pt-4 border-t border-border/50">
-          <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-muted-foreground">
-            <div className="flex items-center gap-1">
-              <TrendingDown className="h-3 w-3 text-emerald-600" />
-              <span>Mejor que el promedio</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <TrendingUp className="h-3 w-3 text-amber-600" />
-              <span>Por debajo del promedio</span>
+        {/* Summary */}
+        {vendorStats.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-border/50">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
+              <div>
+                <p className="text-2xl font-bold text-foreground">{totalTrips.toLocaleString()}</p>
+                <p className="text-xs text-muted-foreground">Total Viajes</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-emerald-700">${(totalRevenue / 1000).toFixed(1)}k</p>
+                <p className="text-xs text-muted-foreground">Total Ingresos</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-teal-700">
+                  ${(totalRevenue / totalTrips || 0).toFixed(2)}
+                </p>
+                <p className="text-xs text-muted-foreground">Tarifa Promedio</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-lime-700">
+                  {(vendorStats.reduce((acc, v) => acc + v.total_distance, 0) / totalTrips || 0).toFixed(2)} mi
+                </p>
+                <p className="text-xs text-muted-foreground">Distancia Promedio</p>
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </CardContent>
     </Card>
   )

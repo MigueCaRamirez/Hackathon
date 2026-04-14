@@ -21,38 +21,48 @@ import {
 } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { Search, ArrowUpDown, ArrowUp, ArrowDown, X } from "lucide-react"
-import { MunicipioData, getDepartamentoColor } from "@/lib/types"
-import { filterMunicipios, sortMunicipios } from "@/lib/data"
+import { TaxiTripData, getVendorColor, getPaymentTypeColor, VENDOR_NAMES, PAYMENT_TYPE_NAMES } from "@/lib/types"
+import { filterTrips, sortTrips, getVendors, getPaymentTypes } from "@/lib/data"
 
 interface DataTableProps {
-  data: MunicipioData[]
-  selectedDepartamento: string | null
-  onSelectDepartamento: (dept: string | null) => void
+  data: TaxiTripData[]
+  selectedVendor: number | null
+  onSelectVendor: (vendor: number | null) => void
 }
 
-type SortField = keyof MunicipioData
+type SortField = keyof TaxiTripData
 
-export function DataTable({ data, selectedDepartamento, onSelectDepartamento }: DataTableProps) {
+export function DataTable({ data, selectedVendor, onSelectVendor }: DataTableProps) {
   const [searchTerm, setSearchTerm] = useState("")
-  const [sortBy, setSortBy] = useState<SortField>("municipio")
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
+  const [selectedPayment, setSelectedPayment] = useState<number | null>(null)
+  const [sortBy, setSortBy] = useState<SortField>("tpep_pickup_datetime")
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
+  const [currentPage, setCurrentPage] = useState(1)
+  const pageSize = 50
   
-  const departamentos = useMemo(() => {
-    return [...new Set(data.map(m => m.departamento))].sort()
-  }, [data])
+  const vendors = useMemo(() => getVendors(data), [data])
+  const paymentTypes = useMemo(() => getPaymentTypes(data), [data])
   
   const filteredData = useMemo(() => {
-    const filtered = filterMunicipios(data, selectedDepartamento, searchTerm)
-    return sortMunicipios(filtered, sortBy, sortOrder)
-  }, [data, selectedDepartamento, searchTerm, sortBy, sortOrder])
+    const filtered = filterTrips(data, selectedVendor, selectedPayment, searchTerm)
+    return sortTrips(filtered, sortBy, sortOrder)
+  }, [data, selectedVendor, selectedPayment, searchTerm, sortBy, sortOrder])
+  
+  const paginatedData = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filteredData.slice(start, start + pageSize)
+  }, [filteredData, currentPage])
+  
+  const totalPages = Math.ceil(filteredData.length / pageSize)
   
   const handleSort = (field: SortField) => {
     if (sortBy === field) {
       setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')
     } else {
       setSortBy(field)
-      setSortOrder('asc')
+      setSortOrder('desc')
     }
+    setCurrentPage(1)
   }
   
   const getSortIcon = (field: SortField) => {
@@ -61,27 +71,16 @@ export function DataTable({ data, selectedDepartamento, onSelectDepartamento }: 
       ? <ArrowUp className="ml-1 h-3 w-3" /> 
       : <ArrowDown className="ml-1 h-3 w-3" />
   }
-  
-  const getPobrezaColor = (value: number) => {
-    if (value < 30) return "text-green-700"
-    if (value < 45) return "text-teal-600"
-    return "text-emerald-600"
-  }
-  
-  const getInternetColor = (value: number) => {
-    if (value >= 70) return "text-green-700"
-    if (value >= 50) return "text-teal-600"
-    return "text-emerald-600"
-  }
 
   return (
     <Card className="border-border/50 shadow-sm">
       <CardHeader className="pb-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <CardTitle className="text-lg">Datos por Municipio</CardTitle>
+            <CardTitle className="text-lg">Registros de Viajes</CardTitle>
             <CardDescription>
-              {filteredData.length} de {data.length} municipios
+              {filteredData.length.toLocaleString()} de {data.length.toLocaleString()} viajes
+              {totalPages > 1 && ` (Pagina ${currentPage} de ${totalPages})`}
             </CardDescription>
           </div>
           
@@ -90,35 +89,56 @@ export function DataTable({ data, selectedDepartamento, onSelectDepartamento }: 
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Buscar municipio..."
+                placeholder="Buscar por fecha..."
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-8 w-full sm:w-[200px] bg-secondary border-border"
+                onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1) }}
+                className="pl-8 w-full sm:w-[180px] bg-secondary border-border"
               />
             </div>
             
             <Select
-              value={selectedDepartamento || "all"}
-              onValueChange={(value) => onSelectDepartamento(value === "all" ? null : value)}
+              value={selectedVendor?.toString() || "all"}
+              onValueChange={(value) => { onSelectVendor(value === "all" ? null : parseInt(value)); setCurrentPage(1) }}
             >
-              <SelectTrigger className="w-full sm:w-[180px] bg-secondary border-border">
-                <SelectValue placeholder="Departamento" />
+              <SelectTrigger className="w-full sm:w-[160px] bg-secondary border-border">
+                <SelectValue placeholder="Proveedor" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Todos los departamentos</SelectItem>
-                {departamentos.map(dept => (
-                  <SelectItem key={dept} value={dept}>{dept}</SelectItem>
+                <SelectItem value="all">Todos los proveedores</SelectItem>
+                {vendors.map(v => (
+                  <SelectItem key={v} value={v.toString()}>
+                    {VENDOR_NAMES[v] || `Vendor ${v}`}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             
-            {(searchTerm || selectedDepartamento) && (
+            <Select
+              value={selectedPayment?.toString() || "all"}
+              onValueChange={(value) => { setSelectedPayment(value === "all" ? null : parseInt(value)); setCurrentPage(1) }}
+            >
+              <SelectTrigger className="w-full sm:w-[160px] bg-secondary border-border">
+                <SelectValue placeholder="Tipo de Pago" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos los pagos</SelectItem>
+                {paymentTypes.map(p => (
+                  <SelectItem key={p} value={p.toString()}>
+                    {PAYMENT_TYPE_NAMES[p] || `Tipo ${p}`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            
+            {(searchTerm || selectedVendor || selectedPayment) && (
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={() => {
                   setSearchTerm("")
-                  onSelectDepartamento(null)
+                  onSelectVendor(null)
+                  setSelectedPayment(null)
+                  setCurrentPage(1)
                 }}
                 className="shrink-0"
               >
@@ -135,81 +155,104 @@ export function DataTable({ data, selectedDepartamento, onSelectDepartamento }: 
               <TableRow className="border-border hover:bg-transparent">
                 <TableHead 
                   className="cursor-pointer hover:text-foreground transition-colors"
-                  onClick={() => handleSort('municipio')}
+                  onClick={() => handleSort('tpep_pickup_datetime')}
                 >
                   <span className="flex items-center">
-                    Municipio {getSortIcon('municipio')}
+                    Pickup {getSortIcon('tpep_pickup_datetime')}
                   </span>
                 </TableHead>
                 <TableHead 
                   className="cursor-pointer hover:text-foreground transition-colors"
-                  onClick={() => handleSort('departamento')}
+                  onClick={() => handleSort('VendorID')}
                 >
                   <span className="flex items-center">
-                    Departamento {getSortIcon('departamento')}
+                    Proveedor {getSortIcon('VendorID')}
                   </span>
                 </TableHead>
                 <TableHead 
                   className="cursor-pointer hover:text-foreground transition-colors text-right"
-                  onClick={() => handleSort('pobreza')}
+                  onClick={() => handleSort('passenger_count')}
                 >
                   <span className="flex items-center justify-end">
-                    Pobreza (%) {getSortIcon('pobreza')}
+                    Pasajeros {getSortIcon('passenger_count')}
                   </span>
                 </TableHead>
                 <TableHead 
                   className="cursor-pointer hover:text-foreground transition-colors text-right"
-                  onClick={() => handleSort('acceso_internet')}
+                  onClick={() => handleSort('trip_distance')}
                 >
                   <span className="flex items-center justify-end">
-                    Internet (%) {getSortIcon('acceso_internet')}
+                    Distancia {getSortIcon('trip_distance')}
+                  </span>
+                </TableHead>
+                <TableHead 
+                  className="cursor-pointer hover:text-foreground transition-colors"
+                  onClick={() => handleSort('payment_type')}
+                >
+                  <span className="flex items-center">
+                    Pago {getSortIcon('payment_type')}
                   </span>
                 </TableHead>
                 <TableHead 
                   className="cursor-pointer hover:text-foreground transition-colors text-right"
-                  onClick={() => handleSort('empleo_tech')}
+                  onClick={() => handleSort('total_amount')}
                 >
                   <span className="flex items-center justify-end">
-                    Empleos Tech {getSortIcon('empleo_tech')}
+                    Total {getSortIcon('total_amount')}
                   </span>
                 </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredData.length === 0 ? (
+              {paginatedData.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-                    No se encontraron resultados
+                  <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                    {data.length === 0 ? 'Cargue un dataset para ver los datos' : 'No se encontraron resultados'}
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredData.map((municipio) => (
+                paginatedData.map((trip, index) => (
                   <TableRow 
-                    key={municipio.municipio} 
+                    key={`${trip.tpep_pickup_datetime}-${index}`} 
                     className="border-border/50 hover:bg-secondary/50 transition-colors"
                   >
-                    <TableCell className="font-medium">{municipio.municipio}</TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {trip.tpep_pickup_datetime}
+                    </TableCell>
                     <TableCell>
                       <Badge 
                         variant="secondary"
                         style={{ 
-                          backgroundColor: `${getDepartamentoColor(municipio.departamento)}20`,
-                          color: getDepartamentoColor(municipio.departamento),
-                          borderColor: getDepartamentoColor(municipio.departamento)
+                          backgroundColor: `${getVendorColor(trip.VendorID)}20`,
+                          color: getVendorColor(trip.VendorID),
+                          borderColor: getVendorColor(trip.VendorID)
                         }}
-                        className="border"
+                        className="border text-xs"
                       >
-                        {municipio.departamento}
+                        {VENDOR_NAMES[trip.VendorID] || `V${trip.VendorID}`}
                       </Badge>
                     </TableCell>
-                    <TableCell className={`text-right font-mono ${getPobrezaColor(municipio.pobreza)}`}>
-                      {municipio.pobreza.toFixed(1)}%
+                    <TableCell className="text-right font-mono">
+                      {trip.passenger_count}
                     </TableCell>
-                    <TableCell className={`text-right font-mono ${getInternetColor(municipio.acceso_internet)}`}>
-                      {municipio.acceso_internet.toFixed(1)}%
+                    <TableCell className="text-right font-mono text-emerald-700">
+                      {trip.trip_distance.toFixed(2)} mi
                     </TableCell>
-                    <TableCell className="text-right font-mono text-lime-700">
-                      {municipio.empleo_tech.toLocaleString()}
+                    <TableCell>
+                      <Badge 
+                        variant="secondary"
+                        style={{ 
+                          backgroundColor: `${getPaymentTypeColor(trip.payment_type)}20`,
+                          color: getPaymentTypeColor(trip.payment_type),
+                          borderColor: getPaymentTypeColor(trip.payment_type)
+                        }}
+                        className="border text-xs"
+                      >
+                        {PAYMENT_TYPE_NAMES[trip.payment_type] || `T${trip.payment_type}`}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right font-mono font-semibold text-teal-700">
+                      ${trip.total_amount.toFixed(2)}
                     </TableCell>
                   </TableRow>
                 ))
@@ -217,6 +260,33 @@ export function DataTable({ data, selectedDepartamento, onSelectDepartamento }: 
             </TableBody>
           </Table>
         </div>
+        
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-border">
+            <p className="text-sm text-muted-foreground">
+              Mostrando {((currentPage - 1) * pageSize) + 1} - {Math.min(currentPage * pageSize, filteredData.length)} de {filteredData.length.toLocaleString()}
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+              >
+                Anterior
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+              >
+                Siguiente
+              </Button>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   )
