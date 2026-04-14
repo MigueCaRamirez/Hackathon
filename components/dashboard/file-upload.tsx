@@ -150,8 +150,10 @@ export function FileUpload({ onDataLoaded, hasData, onClearData, currentData }: 
       let hasNull = false
       for (const col of EXPECTED_COLUMNS) {
         const value = row[col]
-        if (value === null || value === undefined || value === '') {
+        const strValue = String(value).trim()
+        if (value === null || value === undefined || strValue === '' || strValue.toLowerCase() === 'nan') {
           hasNull = true
+          console.warn(`[v0] Registro descartado: ${col} es nulo`)
           break
         }
       }
@@ -289,19 +291,66 @@ export function FileUpload({ onDataLoaded, hasData, onClearData, currentData }: 
   }
 
   const parseCSV = (text: string): Record<string, unknown>[] => {
-    const lines = text.split('\n').filter(line => line.trim())
-    if (lines.length < 2) throw new Error('El archivo debe tener al menos una fila de encabezados y una de datos')
+    // Normalizar saltos de línea
+    const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    const lines = normalized.split('\n')
+    
+    // Remover líneas completamente vacías del final, pero mantener las del inicio para validar
+    const nonEmptyLines = lines.filter((line, index) => {
+      // Mantener línea si tiene contenido o si es una de las primeras 2 (header y al menos 1 dato)
+      return line.trim().length > 0 || index < 2
+    })
+    
+    if (nonEmptyLines.length < 2) {
+      throw new Error('El archivo debe tener al menos una fila de encabezados y una de datos')
+    }
 
-    const headers = lines[0].split(',').map(h => h.trim().replace(/^["']|["']$/g, ''))
+    // Función para parsear línea CSV respetando comillas
+    const parseCSVLine = (line: string): string[] => {
+      const result: string[] = []
+      let current = ''
+      let insideQuotes = false
+      
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i]
+        const nextChar = line[i + 1]
+        
+        if (char === '"') {
+          if (insideQuotes && nextChar === '"') {
+            current += '"'
+            i++ // Skip next quote
+          } else {
+            insideQuotes = !insideQuotes
+          }
+        } else if (char === ',' && !insideQuotes) {
+          result.push(current.trim())
+          current = ''
+        } else {
+          current += char
+        }
+      }
+      
+      result.push(current.trim())
+      return result
+    }
+
+    const headerLine = nonEmptyLines[0].trim()
+    const headers = parseCSVLine(headerLine).map(h => h.replace(/^["']|["']$/g, ''))
     const data: Record<string, unknown>[] = []
 
-    for (let i = 1; i < lines.length; i++) {
-      const values = lines[i].split(',').map(v => v.trim().replace(/^["']|["']$/g, ''))
-      if (values.length !== headers.length) continue
+    for (let i = 1; i < nonEmptyLines.length; i++) {
+      const line = nonEmptyLines[i].trim()
+      if (line.length === 0) continue
+      
+      const values = parseCSVLine(line).map(v => v.replace(/^["']|["']$/g, ''))
+      if (values.length !== headers.length) {
+        console.warn(`[v0] Fila ${i + 1} tiene ${values.length} columnas, esperaba ${headers.length}. Saltando.`)
+        continue
+      }
 
       const row: Record<string, unknown> = {}
       headers.forEach((header, index) => {
-        row[header] = values[index]
+        row[header] = values[index] || ''
       })
       data.push(row)
     }
